@@ -32,7 +32,10 @@ class ParserFactory:
                 method_registry=self.method_registry,
                 class_registry=self.class_registry,
             ),
-            ".py": PythonParser(),
+            ".py": PythonParser(
+                method_registry=self.method_registry,
+                class_registry=self.class_registry,
+            ),
             ".js": JavaScriptParser(),
             ".jsx": JavaScriptParser(),
             ".ts": TypeScriptParser(),

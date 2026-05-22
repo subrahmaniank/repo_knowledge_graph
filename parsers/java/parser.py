@@ -122,6 +122,8 @@ class JavaParser(BaseParser):
 
         root = tree.root_node
 
+        current_package = self._extract_package(root, source_bytes)
+
         nodes = []
         relationships = []
 
@@ -148,7 +150,7 @@ class JavaParser(BaseParser):
             file_id=file_id,
             nodes=nodes,
             relationships=relationships,
-            current_package="",
+            current_package=current_package,
             current_class=None,
             current_method=None,
             definition_only=definition_only,
@@ -174,6 +176,19 @@ class JavaParser(BaseParser):
                 return self._text(source_bytes, child)
 
         return None
+
+    def _extract_package(self, root, source_bytes):
+
+        for child in root.children:
+            if child.type == "package_declaration":
+                return (
+                    self._text(source_bytes, child)
+                    .replace("package", "")
+                    .replace(";", "")
+                    .strip()
+                )
+
+        return ""
 
     #
     # WALK TREE
@@ -336,6 +351,30 @@ class JavaParser(BaseParser):
                     )
 
         #
+        # CATCH PARAMETER
+        #
+        elif node_type == "catch_formal_parameter":
+            if current_method:
+                exception_type = self._extract_type_node(node, source_bytes)
+
+                name_node = node.child_by_field_name("name")
+
+                if not name_node:
+                    for child in node.children:
+                        if child.type == "identifier":
+                            name_node = child
+                            break
+
+                if exception_type and name_node:
+                    exception_name = self._text(source_bytes, name_node)
+
+                    self.symbol_table.add_variable(
+                        current_method,
+                        exception_name,
+                        exception_type,
+                    )
+
+        #
         # LOCAL VARIABLE
         #
         elif node_type == "local_variable_declaration":
@@ -444,6 +483,34 @@ class JavaParser(BaseParser):
 
                         if existing_method:
                             resolved_call = candidate
+                        else:
+                            imported_static = self.import_resolver.resolve_import(
+                                file_id,
+                                method_name,
+                            )
+
+                            if imported_static:
+                                resolved_call = f"java:{imported_static}"
+                                existing_method = self.method_registry.find_method(
+                                    resolved_call
+                                )
+                            else:
+                                static_candidates = (
+                                    self.import_resolver.resolve_static_wildcard_candidates(
+                                        file_id,
+                                        method_name,
+                                    )
+                                )
+
+                                for candidate_fq in static_candidates:
+                                    wildcard_candidate = f"java:{candidate_fq}"
+                                    existing_method = self.method_registry.find_method(
+                                        wildcard_candidate
+                                    )
+
+                                    if existing_method:
+                                        resolved_call = wildcard_candidate
+                                        break
 
                     #
                     # NORMAL RESOLUTION
@@ -463,12 +530,39 @@ class JavaParser(BaseParser):
                             )
 
                     #
-                    # RESOLVED
+                    # RESOLVED (EXISTING METHOD)
                     #
                     if existing_method:
                         called_id = existing_method["id"]
 
                         resolved = True
+
+                    #
+                    # RESOLVED (TYPE KNOWN, METHOD NOT INDEXED)
+                    #
+                    elif resolved_call:
+                        called_id = resolved_call
+
+                        resolved = True
+
+                        synthetic_method = {
+                            "type": "Method",
+                            "id": called_id,
+                            "name": method_name,
+                            "metadata": {
+                                "synthetic": True,
+                                "inferred": True,
+                                "resolution": "type_based",
+                                "object": object_name,
+                            },
+                        }
+
+                        nodes.append(synthetic_method)
+
+                        self.method_registry.add_method(
+                            called_id,
+                            synthetic_method,
+                        )
 
                     #
                     # UNRESOLVED

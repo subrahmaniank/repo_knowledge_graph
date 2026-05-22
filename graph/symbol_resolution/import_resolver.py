@@ -11,6 +11,13 @@ class ImportResolver:
         #
         self.imports = {}
 
+        #
+        # file_id -> [fully qualified owner]
+        # for imports like:
+        # import static a.b.C.*
+        #
+        self.static_wildcards = {}
+
     #
     # REGISTER IMPORT
     #
@@ -20,8 +27,26 @@ class ImportResolver:
         fqcn
     ):
 
+        normalized = fqcn.strip()
+
+        is_static = normalized.startswith("static ")
+
+        if is_static:
+            normalized = normalized[len("static "):].strip()
+
+        if normalized.endswith(".*"):
+            if is_static:
+                owner = normalized[:-2]
+
+                if file_id not in self.static_wildcards:
+                    self.static_wildcards[file_id] = []
+
+                self.static_wildcards[file_id].append(owner)
+
+            return
+
         short_name = (
-            fqcn.split(".")[-1]
+            normalized.split(".")[-1]
         )
 
         if file_id not in self.imports:
@@ -30,7 +55,7 @@ class ImportResolver:
 
         self.imports[
             file_id
-        ][short_name] = fqcn
+        ][short_name] = normalized
 
     #
     # RESOLVE IMPORT
@@ -41,8 +66,26 @@ class ImportResolver:
         short_name
     ):
 
-        return (
+        direct = (
             self.imports
             .get(file_id, {})
             .get(short_name)
         )
+
+        if direct:
+            return direct
+
+        return None
+
+    def resolve_static_wildcard_candidates(
+        self,
+        file_id,
+        short_name,
+    ):
+
+        candidates = []
+
+        for owner in self.static_wildcards.get(file_id, []):
+            candidates.append(f"{owner}.{short_name}")
+
+        return candidates

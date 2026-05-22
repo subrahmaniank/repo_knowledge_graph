@@ -22,12 +22,15 @@ load_dotenv()
 #
 # CONFIG
 #
-REPO_URL = "https://github.com/subrahmaniank/invoice-generator-cursor.git"
+REPO_URL = os.getenv("REPO_URL")
 
 REPOS_DIR = "repos"
 
 
 def main():
+
+    if not REPO_URL:
+        raise ValueError("REPO_URL is not set. Add it to your .env file.")
 
     print("\n=== CLONING REPOSITORY ===")
 
@@ -66,6 +69,7 @@ def main():
         os.getenv("NEO4J_URI"),
         os.getenv("NEO4J_USERNAME"),
         os.getenv("NEO4J_PASSWORD"),
+        os.getenv("NEO4J_BATCH_SIZE", "500"),
     )
 
     #

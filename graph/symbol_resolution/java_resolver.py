@@ -51,6 +51,8 @@ class JavaResolver:
         if object_name == "this":
             return f"{current_class}.{method_name}"
 
+        variable_type = None
+
         #
         # METHOD SCOPE
         #
@@ -65,6 +67,26 @@ class JavaResolver:
             )
 
         #
+        # COMMON LOGGER CONVENTIONS
+        #
+        if not variable_type and object_name in {"log", "logger"}:
+            variable_type = "Logger"
+
+        #
+        # COMMON FRAMEWORK RECEIVER ALIASES
+        #
+        if not variable_type and object_name:
+            framework_aliases = {
+                "root": "jakarta.persistence.criteria.Root",
+                "cb": "jakarta.persistence.criteria.CriteriaBuilder",
+                "auth": "org.springframework.security.config.annotation.web.builders.HttpSecurity",
+                "session": "org.springframework.security.config.annotation.web.configurers.SessionManagementConfigurer",
+                "cors": "org.springframework.web.cors.CorsConfiguration",
+            }
+
+            variable_type = framework_aliases.get(object_name)
+
+        #
         # STATIC CALL
         #
         if not variable_type and object_name and object_name[0].isupper():
@@ -74,6 +96,24 @@ class JavaResolver:
         # FAILED
         #
         if not variable_type:
+            if object_name and method_name:
+                accessor_prefixes = ["get", "set", "is", "has"]
+
+                fluent_methods = {
+                    "equal",
+                    "lessThanOrEqualTo",
+                    "anyRequest",
+                    "permitAll",
+                    "sessionCreationPolicy",
+                    "configurationSource",
+                }
+
+                if any(method_name.startswith(prefix) for prefix in accessor_prefixes):
+                    return f"java:inferred:{object_name}.{method_name}"
+
+                if method_name in fluent_methods:
+                    return f"java:framework:{object_name}.{method_name}"
+
             return None
 
         #

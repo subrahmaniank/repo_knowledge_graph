@@ -1,5 +1,7 @@
 # graph/neo4j_writer.py
 
+from collections import defaultdict
+
 from neo4j import GraphDatabase
 
 
@@ -9,7 +11,8 @@ class Neo4jWriter:
         self,
         uri,
         username,
-        password
+        password,
+        batch_size=500,
     ):
 
         self.driver = (
@@ -21,6 +24,8 @@ class Neo4jWriter:
                 )
             )
         )
+
+        self.batch_size = max(1, int(batch_size))
 
     #
     # CLOSE
@@ -40,53 +45,175 @@ class Neo4jWriter:
 
         with self.driver.session() as session:
 
-            #
-            # WRITE NODES
-            #
-            for node in nodes:
+            self._write_nodes_batch(
+                session,
+                nodes
+            )
 
+            self._write_relationships_batch(
+                session,
+                relationships
+            )
+
+    def _write_nodes_batch(self, session, nodes):
+
+        if not nodes:
+            return
+
+        grouped = defaultdict(list)
+
+        for node in nodes:
+            try:
+                label = self._sanitize_cypher_token(node["type"])
+                grouped[label].append(self._node_row(node))
+            except Exception as e:
+                print("\n[Neo4jWriter] NODE PREP ERROR")
+                print(node)
+                print(e)
+
+        for label, rows in grouped.items():
+            query = f"""
+            UNWIND $rows AS row
+            MERGE (n:{label} {{
+                id: row.id
+            }})
+            SET n += row.properties
+            """
+
+            for chunk in self._chunked(rows, self.batch_size):
                 try:
-
-                    self._write_node(
-                        session,
-                        node
-                    )
-
+                    session.run(query, rows=chunk)
                 except Exception as e:
-
-                    print(
-                        "\n[Neo4jWriter] "
-                        "NODE ERROR"
-                    )
-
-                    print(node)
-
+                    print("\n[Neo4jWriter] NODE BATCH ERROR")
+                    print(f"Label: {label}")
                     print(e)
+                    for row in chunk:
+                        try:
+                            self._write_node(
+                                session,
+                                {
+                                    "type": label,
+                                    "id": row["id"],
+                                    "name": row["properties"].get("name"),
+                                    "metadata": {
+                                        k: v
+                                        for k, v in row["properties"].items()
+                                        if k not in {"id", "name"}
+                                    },
+                                },
+                            )
+                        except Exception as fallback_error:
+                            print("\n[Neo4jWriter] NODE ERROR")
+                            print(row)
+                            print(fallback_error)
 
-            #
-            # WRITE RELATIONSHIPS
-            #
-            for relationship in relationships:
+    def _write_relationships_batch(self, session, relationships):
 
+        if not relationships:
+            return
+
+        grouped = defaultdict(list)
+
+        for relationship in relationships:
+            try:
+                rel_type = self._sanitize_cypher_token(relationship["type"])
+                grouped[rel_type].append(self._relationship_row(relationship))
+            except Exception as e:
+                print("\n[Neo4jWriter] RELATIONSHIP PREP ERROR")
+                print(relationship)
+                print(e)
+
+        for rel_type, rows in grouped.items():
+            query = f"""
+            UNWIND $rows AS row
+            MATCH (a {{
+                id: row.from_id
+            }})
+            MATCH (b {{
+                id: row.to_id
+            }})
+            MERGE (a)-[r:{rel_type}]->(b)
+            SET r += row.properties
+            """
+
+            for chunk in self._chunked(rows, self.batch_size):
                 try:
-
-                    self._write_relationship(
-                        session,
-                        relationship
-                    )
-
+                    session.run(query, rows=chunk)
                 except Exception as e:
-
-                    print(
-                        "\n[Neo4jWriter] "
-                        "RELATIONSHIP ERROR"
-                    )
-
-                    print(
-                        relationship
-                    )
-
+                    print("\n[Neo4jWriter] RELATIONSHIP BATCH ERROR")
+                    print(f"Type: {rel_type}")
                     print(e)
+                    for row in chunk:
+                        try:
+                            self._write_relationship(
+                                session,
+                                {
+                                    "from": row["from_id"],
+                                    "to": row["to_id"],
+                                    "type": rel_type,
+                                    "metadata": row["properties"],
+                                },
+                            )
+                        except Exception as fallback_error:
+                            print("\n[Neo4jWriter] RELATIONSHIP ERROR")
+                            print(row)
+                            print(fallback_error)
+
+    def _node_row(self, node):
+
+        node_id = node["id"]
+
+        properties = {
+            "id": node_id,
+            "name": node.get("name"),
+        }
+
+        metadata = node.get("metadata", {})
+        properties.update(metadata)
+
+        properties = {
+            k: v
+            for k, v in properties.items()
+            if v is not None
+        }
+
+        return {
+            "id": node_id,
+            "properties": properties,
+        }
+
+    def _relationship_row(self, relationship):
+
+        properties = relationship.get("metadata", {})
+
+        properties = {
+            k: v
+            for k, v in properties.items()
+            if v is not None
+        }
+
+        return {
+            "from_id": relationship["from"],
+            "to_id": relationship["to"],
+            "properties": properties,
+        }
+
+    def _chunked(self, values, chunk_size):
+
+        for i in range(0, len(values), chunk_size):
+            yield values[i : i + chunk_size]
+
+    def _sanitize_cypher_token(self, token):
+
+        if not token:
+            raise ValueError("Empty Cypher token")
+
+        sanitized = str(token)
+
+        if not sanitized.replace("_", "").isalnum():
+            raise ValueError(f"Unsafe Cypher token: {token}")
+
+        return sanitized
 
     #
     # WRITE NODE

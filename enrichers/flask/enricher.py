@@ -20,19 +20,31 @@ class FlaskEnricher(BaseEnricher):
             "relationships"
         ]
 
-        file_id = str(file_path)
+        file_id = f"python:file:{file_path}"
+
+        function_id_by_name = {}
+
+        for node in nodes:
+            if node.get("type") == "Function":
+                function_id_by_name[node.get("name")] = node.get("id")
 
         #
         # DETECT FLASK APP
         #
         if "Flask(" in source_code:
 
-            app_id = f"{file_id}/flask_app"
+            app_id = f"flask:app:{file_path}"
 
             nodes.append({
                 "type": "Framework",
                 "id": app_id,
                 "name": "Flask"
+            })
+
+            relationships.append({
+                "from": file_id,
+                "type": "USES_FRAMEWORK",
+                "to": app_id,
             })
 
         #
@@ -47,9 +59,7 @@ class FlaskEnricher(BaseEnricher):
 
             blueprint_name = match.group(1)
 
-            blueprint_id = (
-                f"blueprint/{blueprint_name}"
-            )
+            blueprint_id = f"flask:blueprint:{file_path}:{blueprint_name}"
 
             nodes.append({
                 "type": "Blueprint",
@@ -116,7 +126,7 @@ class FlaskEnricher(BaseEnricher):
             #
             # API NODE
             #
-            api_id = f"api/{route_path}"
+            api_id = f"flask:api:{file_path}:{route_path}"
 
             nodes.append({
                 "type": "API",
@@ -150,9 +160,7 @@ class FlaskEnricher(BaseEnricher):
             #
             for method in http_methods:
 
-                method_id = (
-                    f"http_method/{method}"
-                )
+                method_id = f"flask:http_method:{method}"
 
                 nodes.append({
                     "type": "HTTPMethod",
@@ -170,16 +178,13 @@ class FlaskEnricher(BaseEnricher):
             # CONNECT TO FUNCTION
             #
             if target_function:
+                function_id = function_id_by_name.get(target_function)
 
-                function_id = (
-                    f"{file_id}/"
-                    f"{target_function}"
-                )
-
-                relationships.append({
-                    "from": api_id,
-                    "type": "HANDLED_BY",
-                    "to": function_id
-                })
+                if function_id:
+                    relationships.append({
+                        "from": api_id,
+                        "type": "HANDLED_BY",
+                        "to": function_id
+                    })
 
         return graph_data

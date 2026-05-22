@@ -35,12 +35,34 @@ class JavaExpressionResolver:
                 )
             )
 
-            return (
+            field_node = (
+                node.child_by_field_name(
+                    "field"
+                )
+            )
+
+            object_name = (
                 self.extract_root_object(
                     object_node,
                     source_bytes,
                     text_extractor
                 )
+            )
+
+            #
+            # this.repo.save() -> receiver should be "repo"
+            #
+            if (
+                object_name in ["this", "super"]
+                and field_node
+            ):
+                return text_extractor(
+                    source_bytes,
+                    field_node
+                )
+
+            return (
+                object_name
             )
 
         #

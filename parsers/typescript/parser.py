@@ -35,7 +35,7 @@ class TypeScriptParser(BaseParser):
     #
     # MAIN PARSE
     #
-    def parse(self, file_path):
+    def parse(self, file_path, definition_only=False):
 
         file_path = Path(file_path)
 
